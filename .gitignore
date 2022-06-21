@@ -1,0 +1,5 @@
+node_modules
+voice-compass-figma-plugin
+.DS_Store
+lib
+pkg

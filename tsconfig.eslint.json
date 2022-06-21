@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "./src/**/*",
+    "./.eslintrc.js",
+    "package.json",
+    "./webpack.config.js"
+  ],
+  "exclude": ["./node_modules"]
+}

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es6",
+    "lib": ["es2017", "dom"],
+    "moduleResolution": "node",
+    "jsx": "react",
+    "esModuleInterop": true,
+    "jsxFactory": "h",
+    "module": "CommonJS",
+    "typeRoots": ["./node_modules/@types", "./node_modules/@figma"],
+    "baseUrl": "src",
+    "outDir": "lib"
+  },
+  "exclude": ["./node_modules/"]
+}

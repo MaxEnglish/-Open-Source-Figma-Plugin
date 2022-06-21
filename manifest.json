@@ -1,0 +1,7 @@
+{
+  "name": "VoiceCompass",
+  "id": "919173558557574583",
+  "api": "1.0.0",
+  "main": "lib/code.js",
+  "ui": "lib/ui.html"
+}

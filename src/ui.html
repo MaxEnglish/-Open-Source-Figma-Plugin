@@ -1,0 +1,138 @@
+<head>
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/thomas-lowry/figma-plugin-ds/dist/figma-plugin-ds.css"
+  />
+  <style>
+    .rounded {
+      border-radius: 4px;
+    }
+
+    .bg-gray-100 {
+      background-color: #efefef;
+    }
+
+    .p-2 {
+      padding: 16px;
+    }
+
+    h2:not(:first-child) {
+      border-top: 1px solid #dedede;
+    }
+
+    .px-2 {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
+    small {
+      font-size: var(--font-size-xsmall);
+    }
+
+    .py-3 {
+      padding-top: 24px;
+      padding-bottom: 24px;
+    }
+
+    .mt-4 {
+      margin-top: 32px !important;
+    }
+
+    .space-x-1 > * + * {
+      margin-left: 8px;
+    }
+
+    .space-x-2 > * + * {
+      margin-left: 16px;
+    }
+
+    .space-y-1 > * + * {
+      margin-top: 8px;
+    }
+
+    .space-y-2 > * + * {
+      margin-top: 16px;
+    }
+
+    .text-lg {
+      font-size: 1rem;
+    }
+
+    .flex {
+      display: flex;
+    }
+
+    .flex-none {
+      flex: 0;
+    }
+
+    .justify-end {
+      justify-content: flex-end;
+    }
+
+    .block {
+      display: block;
+    }
+
+    .w-full {
+      width: 100%;
+    }
+
+    .bg-none {
+      background: none;
+    }
+
+    textarea {
+      font-family: inherit;
+    }
+
+    .error-dot {
+      position: absolute;
+      filter: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: red;
+      top: -4px;
+      right: -4px;
+    }
+
+    hr {
+      border-color: #dedede;
+    }
+
+    .sidebar {
+      flex: 0 0 32px;
+    }
+
+    .content {
+      height: 100%;
+      overflow: auto;
+    }
+
+    .modal {
+      position: absolute;
+      z-index: 1000;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(255, 255, 255, 0.9);
+    }
+
+    .modal-content {
+      max-width: 280px;
+      padding: 12px;
+      background-color: #fff;
+      border-radius: 3px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app"></div>
+</body>
