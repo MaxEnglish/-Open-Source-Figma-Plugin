@@ -1,7 +1,8 @@
 {
-  "name": "VoiceCompass",
+  "name": "Voice Compass",
   "id": "919173558557574583",
   "api": "1.0.0",
   "main": "lib/code.js",
-  "ui": "lib/ui.html"
+  "ui": "lib/ui.html",
+  "editorType": ["figma"]
 }

@@ -4,29 +4,44 @@ import { useRef } from "preact/hooks";
 
 export const Empty: FunctionComponent<{}> = () => (
   <OnboardingTip
-    body="Please select a node to see available transcripts."
+    title="Please click on a frame to show available nodes"
+    body="No frames are selected"
     icon="minus"
   />
 );
 
 export const Heading: FunctionComponent<{
   title: string;
+  style?: string;
 }> = (props) => (
   <div class="flex px-2 py-3">
-    <h2 class="section-title" style="margin: 0">
+    <h2 class="headers font" style={props.style}>
       {props.title}
     </h2>
     {props.children}
   </div>
 );
 
-export function OnboardingTip({ body, icon }) {
-  return (
-    <div class="onboarding-tip">
-      <div class={`icon icon--${icon || "styles"}`} />
-      <div class="onboarding-tip__msg">{body}</div>
-    </div>
-  );
+export function OnboardingTip({ body, icon, title = "" }) {
+  if (title !== "") {
+    return (
+      <div style="text-align: center; margin-top: 60px">
+        <div class="onboarding-tip__msg font" style="color: #242424; font-size: 15px">{title}</div>
+        <div class="onboarding-tip font" style="margin-left: 28%;">
+          <div class={`icon icon--black8 icon--${icon || "styles"} font`} />
+          <div class="font" style="color: #757575; padding: var(--size-xxsmall) 0 var(--size-xxsmall) 0; font-size: 15px; letter-spacing: var(--font-letter-spacing-pos-xsmall); line-height: var(--line-height); margin: 0;">{body}</div>
+        </div>
+      </div>
+    )
+  } else {
+    return (
+      <div class="onboarding-tip font">
+        <div class={`icon icon--black8 icon--${icon || "styles"} font`} />
+        <div class="onboarding-tip__msg font" style="font-size: 15px">{body}</div>
+      </div>
+    )
+  }
+
 }
 
 export const Content: FunctionComponent<{}> = (props) => (
@@ -35,9 +50,20 @@ export const Content: FunctionComponent<{}> = (props) => (
   </div>
 );
 
+export const HasHeaders: FunctionComponent<{
+  header?: string;
+  mode: boolean;
+}> = (props) => {
+  if (props.mode && props.header) {
+    return (
+      <div class="font" style="font-size: 13px;; color: #757575">{props.header}</div>
+    )
+  }
+}
+
 export const Input: FunctionComponent<{
   value: string;
-  onChange: (newValue: string) => void;
+  onChange?: (newValue: string) => void;
   placeholder?: string;
   label?: string;
   disabled?: boolean;
@@ -48,7 +74,7 @@ export const Input: FunctionComponent<{
   const commonProps = {
     ref: inputRef,
     value: props.value,
-    placeholder: props.placeholder || "Voice transcript (plain text or SSML)",
+    placeholder: props.placeholder,
     onFocus: () => {
       if (inputRef.current && props.selectAll) {
         inputRef.current.select();
@@ -59,15 +85,16 @@ export const Input: FunctionComponent<{
     },
   };
   return (
-    <div class="input block w-full">
+    <div class="input block w-full b">
       {!props.multiline ? (
         <input
+          type="text"
           {...commonProps}
-          class="input__field block w-full"
-          style="border: 1px solid var(--black1)"
+          class="input__field block w-full b"
+          style="border: 1px solid var(--black1); color: #353230; font-size: 13px"
         />
       ) : (
-        <textarea {...commonProps} class="textarea" rows={5} />
+        <textarea {...commonProps} class="textarea1 b" style="color: #353230; font-size: 13px; border-radius: 2px" rows={5} type="text" />
       )}
     </div>
   );
@@ -85,14 +112,14 @@ export const LastUpdated: FunctionComponent<{ lastUpdated: any }> = (props) => (
 );
 
 export const IconButton: FunctionComponent<{
-  icon: "trash" | "reverse" | "close" | "play" | "frame";
+  icon: "trash" | "close" | "play" | "frame" | "hyperlink";
   title?: string;
   error?: boolean;
   onClick?: () => void;
 }> = (props) => {
   return (
     <div
-      class="icon-button"
+      class="icon-button a"
       onClick={props.onClick}
       title={props.title}
       style="position: relative"

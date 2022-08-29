@@ -2,6 +2,8 @@ import { h, Fragment, render, FunctionComponent } from "preact";
 import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { v4 as uuid } from "uuid";
 import Fuse from "fuse.js";
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
+
 import {
   Input,
   LastUpdated,
@@ -10,25 +12,49 @@ import {
   Content,
   Heading,
   OnboardingTip,
+  HasHeaders,
 } from "./ui/kit";
+
+//import { Group } from "aws-sdk/clients/budgets";
 
 type UiMessage =
   | { type: "set-step-on-selection"; payload: null | Step }
   | { type: "set-step"; payload: { key: string; step: Step } }
   | { type: "delete-step"; payload: string }
   | { type: "select-step"; payload: string }
-  | { type: "select-all" }
-  | { type: "select-duplicates" }
   | { type: "request-all-steps-for-download" }
-  | { type: "request-all-steps" };
+  | { type: "request-all-steps" }
+  | { type: "send-flow"; payload: {data: Array<{TNID: string, ID: string}>; type: string}}
+  | { type: "gather-json"; }
+  | { type: "get-groups"; }
+  | { type: "add-to-groups"; payload: string}
+  | { type: "set-to-new-group"; payload: string }
+  | { type: "delete-group"; payload: string }
+  | { type: "set-token"; payload: string}
+  | { type: "set-link"; payload: string}
+  | { type: "check-for-filled-inputs"}
+  | { type: "send-uuid"; payload: { UUID: string; ID: string } }
+  | { type: "error-message"; payload: string}
+  | { type: "evaluate-response";}
+  | { type: "set-name";}
 
 type PluginMessage =
   | {
-      type: "selection";
-      payload: null | { name: string; step: null | Step };
-    }
+    type: "selection";
+    payload: null | { name: string; step: null | Step;};
+  }
   | { type: "all-steps-for-download"; payload: Array<Step> }
-  | { type: "all-steps"; payload: Array<Step> };
+  | { type: "all-steps"; payload: Array<Step> }
+  | { type: "get-flow"; payload: {linkSeg: string; token: string; pageNodeID: string; type: string} }
+  | { type: "generate-link"; payload: Array<Step> }
+  | { type: "send-groups"; payload: Array<string>}
+  | { type: "startup"; payload: string}
+  | { type: "has-filled-inputs";}
+  | { type: "new-uuid"; payload: string}
+  | { type: "set-token-and-url"; payload: {url: string; token: string};}
+  | { type: "test-api-req"; payload: {url: string; token: string};}
+  | { type: "set-to-saved"; payload: string}
+  | { type: "change-to-primary";}
 
 type Language = "en-US" | "en-AU" | "es-419" | "es-ES" | "fr-CA" | "pt-BR";
 
@@ -56,23 +82,23 @@ const pluginStream = (() => {
 })();
 
 interface Step {
-    key: string;
-    body: string;
-    name?: string;
-    i18n: Record<Language, { body: string }>;
-    group?: string;
-    description?: string;
-    trigger?: {
-      selector: string;
-    };
-    // For canvas view
-    linksTo?: Array<string>;
-    canvasX?: number;
-    canvasY?: number;
-    end?: boolean;
-    escalate?: boolean;
-    automate?: boolean;
-    imageKey?: string;
+  key: string;
+  body: string;
+  name?: string;
+  i18n: Record<Language, { body: string }>;
+  group?: string;
+  description?: string;
+  trigger?: {
+    selector: string;
+  };
+  // For canvas view
+  linksTo?: String[];
+  canvasX?: number;
+  canvasY?: number;
+  end?: boolean;
+  escalate?: boolean;
+  automate?: boolean;
+  imageKey?: string;
   lastUpdated?: string;
 }
 
@@ -122,6 +148,107 @@ const postMessage = (msg: UiMessage) => {
     "*"
   );
 };
+
+const colors: Array<string> = ["#845cec", "#47A0F4", "#EEB45D", "#73D3C2", "#FF7575", "#6EBB53", "#4419C0", "#FFDB5B", "#FF85CE", "#427E7B", "#9DD0FF"];
+
+//Using Figma API
+const testAPIReq = (url: string, token: string) => {
+  const error: string = "Either the page link or access token you entered are invalid"
+  let finalLink: string = "https://api.figma.com/v1/files/" + url
+  getAPIData(finalLink,token)
+  .then((response) => {
+    if (response.err) {
+      handleError(error);
+    } else {
+      postMessage({
+        type: "evaluate-response",
+      })
+    }
+  })
+  .catch(() => {
+    handleError(error);
+  })
+}
+
+const handleError = (msg: string) => {
+  postMessage({
+    type: "error-message",
+    payload: msg,
+  })
+  document.getElementById("createJourneyBtn").setAttribute('class','settings-primary');
+}
+
+
+//Skeleton for creating Figma API requests
+const getAPIData = async (url = '', token: string) => {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Figma-Token': token,
+    },
+  });
+  return response.json(); 
+}
+
+//traverses figma API data and returns the transitionNodeIDs which translate to linksTo
+const getFlowData = (link: string, token: string, pageNodeID: string, type: string) => {
+
+  const error: string = "There was an issue with either your access token or page link. Please modify these in Settings and try again"
+
+  let linkFinal: string = "https://api.figma.com/v1/files/" + link;
+
+  getAPIData(linkFinal,token)
+  .then(response => {
+
+    if (response.err) {
+     handleError(error);
+     document.getElementById("loadingWheel").setAttribute("style","visibility: hidden");
+    } else {
+      //TNID= transitionNodeID
+      let data: Array<{TNID: string, ID: string}> = [];
+
+      let pageNodeIndex: number;
+
+      for (let i = 0; i <= response.document.children.length; i++) {
+        if (response.document.children[i].id === pageNodeID){
+          pageNodeIndex = i;
+          break;
+        }
+      }
+
+      response.document.children[pageNodeIndex].children.forEach(function(e){  //traversing frame nodes
+        if(typeof e.transitionNodeID !== 'undefined'){
+          data.push({TNID: e.transitionNodeID, ID: e.id})
+        }
+      })
+
+      response.document.children[pageNodeIndex].children.forEach(function(j){
+        if(j.children !== []){
+          j.children.forEach(function(i) {  //traversing children of frame nodes
+            if(typeof i.transitionNodeID !== 'undefined'){
+              data.push({TNID: i.transitionNodeID, ID: j.id})
+            }
+          })
+        }
+      })
+
+      postMessage({
+        type: "send-flow",
+        payload: {
+          data: data,
+          type: type,
+        }
+      })
+    }
+  })
+  .catch(() => {
+    handleError(error);
+    document.getElementById("loadingWheel").setAttribute("style","visibility: hidden");
+  });
+}
+
+//Function Components
 
 const PlayButton: FunctionComponent<{
   transcript: string;
@@ -201,73 +328,96 @@ const StepEditor: FunctionComponent<{
   onSelect?: () => void;
   error?: string;
   language: Language;
-}> = ({ value, error, onSelect, onChange, onDelete, language }) => {
+  nodesTab: boolean;
+}> = ({ value, error, onSelect, onChange, onDelete, language, nodesTab}) => {
   return (
-    <div class="space-y-1">
+    <div>
       <div class="flex space-x-1">
-        <PlayButton
-          transcript={
-            language === defaultLanguage
-              ? value.body
-              : value.i18n[language] && value.i18n[language].body
-          }
-          language={language}
-        />
-        <IconButton
-          icon="reverse"
-          title="Regenerate key"
-          onClick={() => {
-            onChange({
-              ...value,
-              key: uuid(),
-            });
-          }}
-        />
-        <div class="space-y-1" style="flex: 1">
-          <Input
-            label="Key"
-            value={value.key}
-            placeholder="Step key (use the generate icon on the left)"
-            onChange={(newVal: string) => {
-              onChange({
-                ...value,
-                key: newVal,
-              });
-            }}
-            selectAll
-            disabled
-          />
-
-          <Input
-            label="Transcript"
-            multiline
-            value={
-              language === defaultLanguage
-                ? value.body
-                : value.i18n[language]
-                ? value.i18n[language].body
-                : ""
-            }
-            onChange={(newVal: string) => {
-              onChange({
-                ...value,
-                ...(language === defaultLanguage
-                  ? { body: newVal }
-                  : {
-                      i18n: { ...value.i18n, [language]: { body: newVal } },
-                    }),
-              });
-            }}
-          />
-        </div>
-        {onSelect && (
-          <IconButton icon="frame" title="Select step" onClick={onSelect} />
-        )}
-
-        {onDelete && (
+        <div class="space-y-1 space-x-4" style="width: 400px; margin: auto;">
+          <div style="margin-left: 72px;">
+            <HasHeaders
+              header="Node Name"
+              mode={nodesTab}
+            />
+          </div>
+          <div style="display: flex; flex-direction: row; margin-left: 32px; margin-top: 2px">
+            {onSelect && (
+              <div>
+                <IconButton icon="frame" title="Go to this node" onClick={onSelect} />
+              </div>
+            )} 
+            {!onSelect && (
+              <div class="icon icon--frame"></div>
+            )}
+            <div style="width: 300px;">
+              <Input
+              value= {value.name}
+              onChange={(newVal: string) => {
+                value.name = newVal;
+                onChange({
+                  ...value
+                });
+              }}
+              selectAll
+              disabled
+            />
+            
+            </div>
+            {onDelete && (
+          <div>
           <IconButton icon="trash" title="Delete step" onClick={onDelete} />
+          </div>
         )}
+          </div>
+
+          <div style="margin-top: 30px;">
+            <HasHeaders
+              header="Phrase"
+              mode={nodesTab}
+            />
+          </div>
+
+          <div style="display: flex; flex-direction: row; margin-left: 32px; margin-top: 2px">
+            <PlayButton
+              transcript={
+                language === defaultLanguage
+                ? value.body
+                : value.i18n[language] && value.i18n[language].body
+              }
+              language={language}
+            />
+
+            <div style="width: 300px;">
+                <Input
+                placeholder="Type your phrase"
+                multiline
+                value={
+                  language === defaultLanguage
+                  ? value.body
+                  : value.i18n[language]
+                  ? value.i18n[language].body
+                  : ""
+                }
+                onChange={(newVal: string) => {
+                  language === defaultLanguage
+                  ? value.body = newVal
+                  : value.i18n[language]
+                  ? value.i18n[language].body = newVal
+                  : ""
+                  onChange({
+                    ...value,
+                    ...(language === defaultLanguage
+                    ? { body: newVal }
+                    : { i18n: { ...value.i18n, [language]: { body: newVal } }, }),
+                  });
+                }}
+              />
+
+            </div>
+          </div>
+        </div>
       </div>
+
       {error && (
         <p style="color: #f00; background-color: rgba(255, 0, 0, 0.05); margin-left: 80px; padding: 10px;">
           <small>{error}</small>
@@ -278,23 +428,26 @@ const StepEditor: FunctionComponent<{
 };
 
 const SidebarButton: FunctionComponent<{
-  icon: string;
+  text: string;
   active?: boolean;
   onClick?: () => void;
 }> = (props) => (
+  <div>
   <button
     onClick={props.onClick}
-    class={`icon icon--${props.icon}`}
-    style={`border: 0; cursor: pointer; background-color: ${
-      props.active ? "#f5f5f5" : "#fff"
-    }`}
-  ></button>
+    class={'tab-button font'}
+    style={`color: ${props.active ? "#845cec" : "#757575"};`}
+  >
+    {props.text}
+  </button>
+  <hr style={`width: 45px; height: 3px; margin-top: -3px; background-color: #845cec; border-color: #845cec; visibility: ${props.active ? "visible" : "hidden"}; z-index: 1000;`}></hr>
+  </div>
 );
 
 const App: FunctionComponent<{}> = () => {
   const [language, setLanguage] = useState<Language>(defaultLanguage);
 
-  const [tab, setTab] = useState<"frame" | "list-detailed" | "settings">(
+  const [tab, setTab] = useState<"frame" | "list-detailed" | "settings" | "get-started" | "change-token">(
     "frame"
   );
 
@@ -312,31 +465,296 @@ const App: FunctionComponent<{}> = () => {
 
   const [steps, setSteps] = useState<Array<Step>>([]);
 
-  const duplicateKeys = useMemo(() => {
-    const keys = new Set();
-    const duplicates = new Set();
-    steps.forEach((step) => {
-      if (keys.has(step.key)) {
-        duplicates.add(step.key);
+  const [compressedJSON, setCompressedJSON] = useState<string>("");
+
+  const [groups, setGroups] = useState<Array<string>>(["Main"]);
+
+  const _inputRef = useRef<HTMLInputElement>();
+
+  const _inputRef2 = useRef<HTMLInputElement>();
+
+  const [accessToken, setAccessToken] = useState<string>("");
+
+  const tokenRef = useRef<HTMLInputElement>();
+
+  const [pageLink, setPageLink] = useState<string>("");
+
+  const linkRef = useRef<HTMLInputElement>();
+
+  const [buttonText, setButtonText] = useState<string>("Create Journey");
+
+  const [linkSave, setLinkSave] = useState<string>("Save");
+
+  const [tokenSave, setTokenSave] = useState<string>("Save");
+
+  const [copied, setCopied] = useState<string>("Copy Data");
+
+  //sends a new key to the backend with a corrosponding Node ID
+  const generateUUID = (ID: string) => {
+    postMessage({
+      type: "send-uuid",
+      payload: {
+        UUID: uuid(),
+        ID: ID,
       }
-      keys.add(step.key);
-    });
-    return duplicates;
-  }, [steps]);
+    })
+  }
+
+  //compresses json step data
+  const compressData = async (json: Step[]) => {
+    const data : string = compressToEncodedURIComponent(JSON.stringify(json));
+    await setCompressedJSON(data);
+    setCopied("Copied to clipboard!");
+    document.getElementById("copyDataBtn").setAttribute('class','settings-secondary')
+    document.getElementById("loadingWheel").setAttribute("style","visibility: hidden");
+    copyText();
+  }
+
+  //copies text in settings textbox
+  const copyText = () => {
+    if (_inputRef) {
+      _inputRef.current.select();
+      document.execCommand("copy");
+    }
+  }
+
+  //updates groups coming from backend
+  const updateGroups = (arr: string[]) => {
+    setGroups(arr)
+  }
+
+  const Groups: FunctionComponent<{
+    name: string;
+  }> = (props) => {
+    const [pressed, setPressed] = useState<boolean>(false);
+    useEffect(() => {
+      if(tab !== "frame" || selection.name !== props.name){
+        setPressed(false);
+      }
+    })
+    return(
+      <div style="margin-left: 105px; margin-top: 10px; display: flex; flex-direction: row">
+
+        <div style="display: flex; flex-direction: column; margin-top: 17px">
+          <div class="font" style="font-size: 85%; margin-left: 5px; margin-bottom: 3px; color: #757575">Group</div>
+
+          <div style="display: flex; flex-direction: row;">
+            <select
+            class="dropdown settings-secondary"
+            value={selection.step.group}
+            onChange={(ev: any) => {
+              postMessage({
+                type: "set-to-new-group",
+                payload: ev.target.value,
+              })
+            }}
+            >
+            {groups.map((group) => (
+              <option class="font options"value={group}>{group}</option>
+            ))
+            }
+            </select>
+
+            <div style="display: flex; flex-direction: column; margin-left: 20px">
+              <button
+              id="createGroupBtn"
+              class= "settings-primary underline2"
+              style={`position: relative; visibility: ${pressed ? "hidden" : "visible"}; width: 150px; font-size: 12px; padding: 5px 10px; color: #845cec; background-color: white; border: none; margin-top: 0; font-size: 13px; box-shadow: 0 0 0 1px transparent;`}
+              onClick={() => {
+                if (!pressed) {
+                  setPressed(true);
+              }}}
+              >
+              + Create a new group
+              </button>
+            
+              <div id="groupTxtBox" class="special-input" style={`visibility: ${pressed ? "visibile" : "hidden"}`}>
+                <input
+                id="focus"
+                class="font b" 
+                style="border: 1px solid var(--black1); border-radius: 5px; width: 100%; height: 100%; padding: 0px 5px"
+                ref={_inputRef2}
+                type="text" 
+                placeholder="Enter group name"
+                />
+              <button
+              class="settings-primary"
+              style="position: absolute; right: 4px; top: 4px; width: 60px; height: 24px; border-radius: 6px;"
+              onClick={() => {
+                selection.step.group = _inputRef2.current.value;
+                postMessage({
+                  type: "add-to-groups",
+                  payload: _inputRef2.current.value
+                })
+                postMessage({
+                  type: "set-to-new-group",
+                  payload: _inputRef2.current.value,
+                })
+              }}
+              > 
+              Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    )
+  }
+
+  const GroupsInSettings: FunctionComponent<{
+  }> = () => {
+    let selected: string = "Group";
+    return(
+      <div class="settings-box">
+          <div class="settings-headers font">Manage Groups</div>
+            <select
+            class="settings-secondary"
+            style="width: 90px"
+            value = "Group"
+            onChange={(ev: any) => {
+              selected = ev.target.value;
+            }}
+            >
+            <option value="Group" class="font options" disabled selected>Group</option>
+            {groups.map((group) => (
+              <option value={group} class="font options">{group}</option>
+            ))
+            }
+            </select>
+            <button
+            id="deleteGroupBtn"
+            class="settings-secondary"
+            onClick={() => {
+              if (selected === "Main"){
+                postMessage({
+                  type: "error-message",
+                  payload: "Main is the default group. It cannot be deleted."
+                })
+              } else if (selected !== "Group") {
+                setConfirm({
+                  body:
+                    `Are you sure you want to delete the group: "${selected}"? This action is irreversible.`,
+                  onConfirm: () => {
+                    postMessage({
+                      type: "delete-group",
+                      payload: selected,
+                    })
+                    postMessage({
+                      type: "get-groups",
+                    })
+                  }
+                });
+              }
+            }}
+            >
+              Click To Remove
+            </button>
+          </div>
+    )
+  }
+
+  const GroupsRef: FunctionComponent<{
+    groupName: string;
+  }> = (props) => (
+  <a
+  class="group-indicator"
+  style={`margin-left: 110px; background-color: ${groups.indexOf(props.groupName) < colors.length ? colors[groups.indexOf(props.groupName)] : "#B5B5B5"};`}
+  >
+    {props.groupName}
+  </a>
+  )
+
+  const DeleteIcon: FunctionComponent<{
+    step: Step;
+  }> = (props) => (
+    <div
+    class="deletion a"
+    onClick={() => {
+      setConfirm({
+        body:
+          "Are you sure you want to delete this node? This action is irreverisble.",
+        onConfirm: () => {
+          postMessage({
+            type: "delete-step",
+            payload: props.step.key,
+          });
+        },
+      });
+    }}
+    >
+      <div style="padding: 8px 10px; margin-right: 2px; color: var(--black8)">Delete Node</div>
+      <div style="height: 150%"class="icon icon--trash icon--black8"></div>
+    </div>
+  )
+  
 
   useEffect(() => {
     const handlePluginMsg = (msg: PluginMessage) => {
-      if (msg.type === "selection") {
-        setSelection(msg.payload);
-      } else if (msg.type === "all-steps-for-download") {
-        downloadContent({
-          filename: "Journey.json",
-          content: JSON.stringify(msg.payload, null, 2),
-        });
-      } else if (msg.type === "all-steps") {
-        setSteps(msg.payload);
+      switch (msg.type) {
+        case "selection":
+          setSelection(msg.payload);
+          if (document.getElementById("copyDataBtn")) {
+            setCopied("Copy Data")
+            document.getElementById("copyDataBtn").setAttribute('class','settings-primary');
+          }
+          break;
+        case "all-steps-for-download":
+          document.getElementById("downloadBtn").setAttribute('class','settings-secondary');
+          downloadContent({
+            filename: "Journey.json",
+            content: JSON.stringify(msg.payload, null, 2),
+          });
+          break;
+        case "all-steps":
+          setSteps(msg.payload);
+          break;
+        case "get-flow":
+          getFlowData(msg.payload.linkSeg,msg.payload.token,msg.payload.pageNodeID, msg.payload.type);
+          break;
+        case "generate-link":
+          compressData(msg.payload);
+          break;
+        case "send-groups":
+          updateGroups(msg.payload);
+          break;
+        case "startup":
+          setAccessToken(msg.payload);
+          setTab("get-started")
+          break;
+        case "has-filled-inputs":
+          setTab("frame");
+          break;
+        case "new-uuid":
+          generateUUID(msg.payload);
+          break;
+        case "set-token-and-url":
+          setPageLink(msg.payload.url);
+          setAccessToken(msg.payload.token);
+          break;
+        case "test-api-req":
+          testAPIReq(msg.payload.url,msg.payload.token);
+          setTimeout(() => {
+            setLinkSave("Save");
+            setTokenSave("Save");
+            document.getElementById("saveToken").setAttribute('class','startup-button')
+            document.getElementById("saveLink").setAttribute('class','startup-button')
+          },1500);
+          break;
+        case "set-to-saved":
+          setLinkSave("");
+          document.getElementById("saveLink").setAttribute('class','icon icon--check check-change')
+          setPageLink(msg.payload);
+          break;
+        case "change-to-primary":
+          setLinkSave("Save");
+          setTokenSave("Save");
+          document.getElementById("saveLink").setAttribute('class','startup-button')
+          document.getElementById("saveToken").setAttribute('class','startup-button')
+          document.getElementById("createJourneyBtn").setAttribute('class','settings-primary');
       }
-    };
+    }
+ 
     pluginStream.subscribe(handlePluginMsg);
     return () => {
       pluginStream.unsubscribe(handlePluginMsg);
@@ -351,19 +769,30 @@ const App: FunctionComponent<{}> = () => {
     }
   }, [tab]);
 
+  const groupSort = (a,b) => {
+    if ( a.group < b.group){
+      return -1;
+    }
+    if ( a.group > b.group){
+      return 1;
+    }
+    return 0;    
+  }
+
   const searchedSteps: Array<Step> = useMemo(
     () =>
       search.trim()
         ? new Fuse(steps, {
-            keys: [
-              "key",
-              "body",
-              ...languages.map((language) => `i18n.${language.value}.body`),
-            ],
-          })
-            .search(search)
-            .map((item) => item.item)
-        : steps,
+          keys: [
+            "name",
+            "body",
+            "group",
+            ...languages.map((language) => `i18n.${language.value}.body`),
+          ],
+        })
+          .search(search)
+          .map((item) => item.item)
+        : steps.sort(groupSort),
     [steps, search]
   );
 
@@ -375,12 +804,13 @@ const App: FunctionComponent<{}> = () => {
       {confirm && (
         <div class="modal">
           <div class="modal-content">
-            <p>
-              <small>{confirm.body}</small>
+            <p class="font" style="margin-bottom: 20px">
+              <small style="font-size: 13px">{confirm.body}</small>
             </p>
-            <div class="flex space-x-2 justify-end">
+            <div style="display: flex; flex-direction: row; margin-top: 10px">
               <button
-                class="button button--tertiary bg-none"
+                class="settings-secondary underline2"
+                style="margin-left: 30px; font-size: 13px; border: none; margin-bottom: 10px"
                 onClick={() => {
                   setConfirm(null);
                 }}
@@ -388,137 +818,162 @@ const App: FunctionComponent<{}> = () => {
                 Cancel
               </button>
               <button
-                class="button button--primary"
+                class="settings-primary"
+                style="margin-left: 50px; margin-bottom: 5px; font-size: 13px; padding: 0 5px"
                 onClick={() => {
                   confirm.onConfirm();
                   setConfirm(null);
                 }}
               >
-                Confirm
+                Delete
               </button>
             </div>
           </div>
         </div>
       )}
-      <div class="sidebar flex-none" style="border-right: 1px solid #dedede;">
+      <div class="sidebar" style={`visibility: ${(tab === "get-started" || tab === "change-token") ? "hidden" : "visible"};`}>
         <SidebarButton
-          icon="frame"
+          text ="New Node"
           active={tab === "frame"}
           onClick={() => {
             setTab("frame");
+            postMessage({
+              type: "get-groups",
+            })
           }}
         />
         <SidebarButton
-          icon="list-detailed"
+          text = "All Nodes"
           active={tab === "list-detailed"}
           onClick={() => {
             setTab("list-detailed");
           }}
         />
         <SidebarButton
-          icon="settings"
+          text = "Settings"
           active={tab === "settings"}
           onClick={() => {
             setTab("settings");
+            setCompressedJSON("");
+            setCopied("Copy Data")
+            //switchSettings();
           }}
         />
+        <hr class="menu-hr" style="bottom: 381px; z-index: 999; margin-top: 7px; background-color: #D9D9D9; "></hr>
+        <hr class="menu-hr" style="bottom: 341px; z-index: 998; background-color: #D9D9D9;"/>
       </div>
-      <div style="height: 100%; overflow: auto; flex: 1">
+      <div style="height: 458px; overflow: auto; position: absolute; top: 42px; width: 520px">
         {tab === "frame" && (
           <Fragment>
-            <Heading title="Voice Assistant Step">
-              <LanguageSelect language={language} setLanguage={setLanguage} />
-            </Heading>
             <Content>
-              {selection ? (
+              {selection && !selection.step ? (
+                <div style= "margin-left: 30px; margin-top: 30px">
                 <Fragment>
+                  <Heading title="Journey Assistant Node" style='color: #353230; font-size: 15px; font-weight: 500'>
+                  </Heading>
+                  <div style= "margin-left: 20px; font-size: 13px; color: #353230">
                   <OnboardingTip body={selection.name} icon={"frame"} />
                   {selection.step?.lastUpdated && (
                     <LastUpdated lastUpdated={selection.step?.lastUpdated} />
                   )}
                   {!selection.step && (
                     <p style="margin: 0">
-                      <small style="color: #9a9a9a; padding-left: 40px;">
-                        No step available
+                      <small class="font" style="color: #BBBBBB; padding-left: 40px; font-size: 13px">
+                        No node available
                       </small>
                     </p>
                   )}
+                  </div>
                 </Fragment>
+                </div>
               ) : null}
               {selection ? (
                 selection.step ? (
+                  <Fragment>
+                    <div style="position: absolute; top: 45px; right: 91px">
+                    <LanguageSelect language={language} setLanguage={setLanguage} />
+                    </div>
+                    <div style="margin-left: 30px;">
+                    <Heading style="margin-bottom: 0px; margin-top: 8px; color: #353230; font-size: 15px; font-weight: 500" title="Journey Assistant Node">
+                  </Heading>
+                  </div>
                   <StepEditor
+                    nodesTab={true}
                     language={language}
                     value={selection.step}
                     onChange={(newStep: Step) => {
                       postMessage({
                         type: "set-step-on-selection",
-                        payload: newStep,
-                      });
-                    }}
-                    onDelete={() => {
-                      setConfirm({
-                        body:
-                          "You are about to delete this step for all languages. This is irreversible. If you would like to delete for one language only, simply clear the input field. Are you sure?",
-                        onConfirm: () => {
-                          postMessage({
-                            type: "set-step-on-selection",
-                            payload: null,
-                          });
-                        },
+                        payload: newStep,   
                       });
                     }}
                   />
+                  
+                  <Groups
+                  name={selection.name}  
+                  /> 
+
+                  <DeleteIcon step={selection.step}/>
+
+                  </Fragment>
+                  
                 ) : (
                   <button
-                    class="button button--primary"
+                    class="settings-primary"
+                    style="margin-left: 65px; margin-top: 20px; padding: 0 7px 0 10px; letter-spacing: 0; width: 119px; height: 38px; border-radius: 9px; font-size: 16px;"
                     onClick={() => {
                       postMessage({
                         type: "set-step-on-selection",
                         payload: {
-                          key: uuid(),
-                          body: "Transcript",
-                          name: "",
-                          i18n: {} as I18n,
-                          group: "",
-                          trigger: null,
-                          linksTo: [],
-                          canvasX: 0,
-                          canvasY: 0,
-                          end: false,
-                          escalate: false,
-                          automate: false,
-                          imageKey: ""
-                        },
+                            key: uuid(),
+                            body: "",
+                            name: selection.name,
+                            i18n: {} as I18n,
+                            group: "Main",
+                            linksTo: [],
+                            canvasX: 0,
+                            canvasY: 0,
+                          },
                       });
+                      postMessage({
+                        type: "set-name",
+                      })
                     }}
                   >
-                    Create step
+                    Create Node
                   </button>
                 )
               ) : (
+                <div style="margin-top: 30px">
                 <Empty />
+                </div>
               )}
             </Content>
           </Fragment>
         )}
         {tab === "list-detailed" && (
           <Fragment>
-            <Heading title="All transcripts">
-              <LanguageSelect language={language} setLanguage={setLanguage} />
-            </Heading>
             <Content>
+              <div class="space-y-3" style="width: 376px; margin: auto; margin-top: 16px; margin-bottom: 0">
               <Input
                 value={search}
                 onChange={setSearch}
-                placeholder="Search entries"
+                placeholder="Search nodes"
               />
-              <div class="space-y-2">
+              </div>
+              <div style="margin-top: 0">
                 {searchedSteps.map((step, index) => (
+                  <div style="margin-top: 0">
+                    <div style="height: 30px"></div>
+                    <GroupsRef
+                    groupName= {step.group}
+                    />
+                    <div style="height: 5px"></div>
                   <StepEditor
+                    nodesTab={false}
                     key={index}
                     value={step}
-                    onChange={(newStep) => {
+                    onChange={(newStep: Step) => {
                       postMessage({
                         type: "set-step",
                         payload: { key: step.key, step: newStep },
@@ -527,7 +982,7 @@ const App: FunctionComponent<{}> = () => {
                     onDelete={() => {
                       setConfirm({
                         body:
-                          "You are about to delete this step for all languages. This is irreversible. If you would like to delete for one language only, simply clear the input field. Are you sure?",
+                          "Are you sure you want to delete this node? This action is irreverisble.",
                         onConfirm: () => {
                           postMessage({
                             type: "delete-step",
@@ -536,19 +991,17 @@ const App: FunctionComponent<{}> = () => {
                         },
                       });
                     }}
+      
                     onSelect={() => {
                       postMessage({
                         type: "select-step",
                         payload: step.key,
                       });
+                      setTab("frame");
                     }}
-                    error={
-                      duplicateKeys.has(step.key)
-                        ? `There is another instance of ${step.key} in your document. Please change one of these keys using the generate function to the left of the key.`
-                        : undefined
-                    }
                     language={language}
                   />
+                  </div>
                 ))}
               </div>
             </Content>
@@ -556,9 +1009,191 @@ const App: FunctionComponent<{}> = () => {
         )}
         {tab === "settings" && (
           <Fragment>
-            <Heading title="Settings"></Heading>
+            <Content>       
+              <div>
+                <GroupsInSettings/>
+              </div>  
+              <div class="settings-box">
+                <div class="settings-headers font">Access token and link</div>
+                <button
+                class="settings-secondary"
+                onClick={() => {
+                  setButtonText("Apply Changes")
+                  setTab("change-token")
+                }}
+                >
+                Edit  
+                </button>
+              </div>
+
+              <DownloadBtn />
+
+              <div style={`border: ${compressedJSON === "" ? "transparent" : "1px solid #757575"}; border-radius: 4px; width: 380px; height: 200px; margin: auto; margin-top: 16px; position: relative;`}>
+                <div class="settings-box" style={`margin: 0; border: ${compressedJSON === "" ? "1px solid #757575" : "transparent"};`} >
+                  <div class="settings-headers font">Link to Voice Compass</div>
+                  <span style="z-index: 999" class="dot myDIV"> ?</span>
+                  <div class="hide">Copy your data and sign in to Voice Compass on your internet browser. Hit the Create your journey button using the “Import” option. Follow the steps to connect your designs!</div> 
+                  <div id= "loadingWheel" style="visibility: hidden" class="loading"></div>
+                  <button
+                  id="copyDataBtn"
+                  class="settings-primary"
+                  style="z-index: 997"
+                  onClick={() => {
+                    document.getElementById("loadingWheel").setAttribute("style","visibile");
+                    postMessage({
+                      type: "gather-json",
+                      });
+                    }}
+                    >
+                    {copied}
+                  </button>
+                </div>
+
+            <div id="showLink" style={`display: flex; flex-direction: column; visibility: ${compressedJSON === "" ? "hidden" : "visible"}; margin: auto; margin-top: 0; margin-bottom: 0; width: 365px`}>   
+                <input 
+                ref={_inputRef}
+                id="textToCopy"
+                class="input__field block w-full font b" 
+                style="border: 1px solid var(--black1); color: #757575; font-size: 13px"
+                readonly 
+                value={compressedJSON}
+                />
+                <p class="list2" style="font-size:80%; margin-top: 5px">Next Steps: </p>
+                <div style="margin-left: 8px; font-size:80%;">
+                  <p class="list2">1. Open Voice Compass in your browser</p>
+                  <p class="list2">2. Select Create Journey</p>
+                  <p class="list2">3. Select Import</p>
+                  <p class="list2">4. Follow the steps to connect your designs</p>
+                </div>
+                </div>
+                </div>
+            </Content>
+          </Fragment>
+        )}
+        {tab === "get-started" && (
+          <Fragment>
             <Content>
-              <Settings />
+              <div style="margin: auto; margin-top: 50px; margin-bottom: 0; text-align: center;">
+              <Heading style="font-size: 15px" title="Follow these step by step instructions to create your Voice Compass journey."></Heading>
+              </div>
+              <div style="margin: auto; margin-top: 15px; margin-bottom: 0; text-align: center; width: 75%">
+              <Heading style="font-size: 12px; color: #757575" title="You will be asked to do this for each design file you create in Figma."> </Heading>
+              </div>
+              <div>
+                <button
+                class="settings-primary"
+                style="margin: auto; margin-top: 25px; font-size: 16px; height: 38px; width: 119px; border-radius: 9px; text-align: center; padding-left: 15px"
+                onClick={() => {
+                  setTab("change-token")
+                }}
+                >
+                Get Started
+                </button>
+              </div>
+            </Content>
+          </Fragment>
+          )}
+        {tab === "change-token" && (
+          <Fragment>
+            <Content>
+              <div style="margin: auto; width: 75%; height: 150%; margin-top: 0px;" class="font">
+                <div style="margin: auto; margin-top: 0px; padding: 5px;">
+                  <div class="font" style="text-align: left; margin-bottom: 25px; font-weight: bold; font-size: 15px;">Step 1:</div>
+                  <div class="font" style="margin-left: 8px; font-size: 14px; color: #757575">
+                    <p>— Right click on the Figma file tab you are working on.</p>
+                    <p>— Select <span style="font-weight: bold">Copy Link</span></p>
+                    <p>— Paste below and press "Save."</p>
+                    <div class="startup-textbox">
+                      <input 
+                        class="input__field block w-full font b" 
+                        style="position: relative; border: 1px solid var(--black1); height: 125%"
+                        ref={linkRef}
+                        value={pageLink}
+                        >
+                        </input>
+                        <button
+                        id="saveLink"
+                        class="startup-button"
+                        onClick={() => {
+                            postMessage({
+                              type: "set-link",
+                              payload: linkRef.current.value,
+                            })
+                          } 
+                        }
+                        >
+                        {linkSave}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="margin: auto; margin-top: 0px; padding 5px;">
+                    <div class="font" style="text-align: left; margin-bottom: 25px; font-weight: bold; font-size: 15px">Step 2: Generate Personal Access Token</div>
+                    <div class="font" style="margin-left: 8px; font-size: 14px; color: #757575">
+                      <p>— Head to your Account Settings from the top-left menu inside Figma.</p>
+                      <p>— Scroll down to the <span style="font-weight: bold">Personal Access Token</span> section.</p>
+                      <p>— Click <span style="font-weight: bold">Create New Token.</span></p>
+                      <p>— A token will be generated. This will be your only chance to copy the token.</p>
+                      <p>— Paste your token below and press "Save."</p>
+                      <div class="startup-textbox" style="margin-left: 6px">
+                      <input 
+                        class="input__field block w-full font b" 
+                        style="position: relative; border: 1px solid var(--black1); height: 125%"
+                        ref={tokenRef}
+                        value={accessToken}
+                        >
+                        </input>
+                        <button
+                        id="saveToken"
+                        class="startup-button"
+                        onClick={() => {
+                          document.getElementById("saveToken").setAttribute('class','icon icon--check check-change')
+                          setTokenSave("");
+                            postMessage({
+                              type: "set-token",
+                              payload: tokenRef.current.value,
+                            })
+                          } 
+                        }
+                        >
+                          {tokenSave}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                  id="createJourneyBtn"
+                  class="settings-primary"
+                  style="margin: auto; margin-top: 35px; margin-bottom: 0; font-size: 15px; width: 140px; height: 40px; border-radius: 7px; padding-left: 15px"
+                  onClick={() => {
+                    document.getElementById("createJourneyBtn").setAttribute('class','settings-secondary');
+                    postMessage({
+                      type: "check-for-filled-inputs"
+                    })
+                  }}
+                  >
+                    {buttonText}
+                  </button>
+                </div>
+                <div id="backBtn" style={`position: absolute; height: 35px; right: 2px; top: 0; margin: 0; padding: 0; border: none; visibility: ${buttonText === "Apply Changes" ? "visible" : "hidden"}`}>
+                  <button
+                  class="back-button underline"
+                  style="position: absolute; bottom: 12px; right: 12px;"
+                  onClick={() => {
+                    setTab("settings");
+                    setLinkSave("Save");
+                    setTokenSave("Save");
+                  }}
+                  >
+                    Back
+                  </button>
+                  <button
+                  class="back-button"
+                  style="transform: scale(.5,1); font-size: 20px"
+                  >
+                    {">"}
+                  </button>
+                </div>
             </Content>
           </Fragment>
         )}
@@ -586,54 +1221,26 @@ const LanguageSelect: FunctionComponent<{
   );
 };
 
-function Settings() {
+
+function DownloadBtn() {
   return (
-    <div class="space-y-2">
-      <div class="flex space-x-2">
+        <div class="settings-box">
+        <div class="settings-headers font">Save to Computer</div>
         <button
-          class="button button--primary"
+          id="downloadBtn"
+          class="settings-secondary"
           onClick={() => {
+            document.getElementById("downloadBtn").setAttribute('class','settings-primary');
             postMessage({
               type: "request-all-steps-for-download",
             });
           }}
         >
-          Download all
-        </button>
-        <button
-          class="button button--tertiary bg-none"
-          onClick={() => {
-            postMessage({
-              type: "select-duplicates",
-            });
-          }}
-        >
-          Show duplicate steps
-        </button>
-        <button
-          class="button button--tertiary bg-none"
-          onClick={() => {
-            postMessage({
-              type: "select-all",
-            });
-          }}
-        >
-          Show all steps
+          Download
         </button>
       </div>
-    </div>
   );
 }
-
-const exampleSelection: { name: string; step: Step } = {
-  name: "Node",
-  step: {
-    key: "1234",
-    body: "Hello",
-    lastUpdated: "1608296433244",
-    i18n: {} as I18n,
-  },
-};
 
 const container = () => document.querySelector("#app");
 
@@ -660,4 +1267,7 @@ const downloadContent = ({ filename, content }) => {
 
 onmessage = (event: { data: { pluginMessage: PluginMessage } }) => {
   pluginStream.send(event.data.pluginMessage);
+
+
 };
+
